@@ -1,8 +1,8 @@
 # Mobius deployment record
 
 - Stack: `anglian-water-csv`, Portainer stack ID 207, environment Mobius (2).
-- Image: `ghcr.io/devnulluk/anglian-water-csv:0.1.0` (public).
-- Application source revision: `9c065a9`.
+- Image: `ghcr.io/devnulluk/anglian-water-csv:0.1.1` (public).
+- Application release: `v0.1.1` (privacy hardening).
 - Container: `anglian-water-csv`, non-root, read-only filesystem.
 - Published port: `8011` → `8080`. Verified unused before deployment.
 - Private bridge network: `anglian-water-csv_water-ledger`.
@@ -11,7 +11,7 @@
 - Tunnel: existing `mobius` Cloudflare Tunnel, routing to `http://10.30.30.2:8011`.
 - Public verification: Cloudflare DNS resolves; HTTPS health endpoint returned `{"status":"ok"}`. Local DNS caches may take time to refresh.
 - Persistent storage: none. Sessions live in memory and expire; CSV files are downloaded by the user.
-- GitHub repository: private. Container package: public with owner approval.
+- GitHub repository and container package: public with owner approval.
 
 ## Update or rollback
 
@@ -21,7 +21,7 @@
 4. Check container health and the HTTPS page; sign in again after a restart.
 5. To roll back, restore the previous version tag and redeploy. No database migration is involved.
 
-Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.1.0`.
+Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.1.1`.
 
 ## Validation still needed
 

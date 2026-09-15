@@ -13,7 +13,7 @@ A small self-hosted web app that signs in to Anglian Water and exports **availab
 
 The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...csv`.
 
-**Status:** version 0.1.0 deployed and healthy on Mobius. Nineteen automated checks pass, covering session isolation, MFA, logout, error redaction, CSV integrity and clock changes. Browser checks verified the sample CSV and the incomplete-export acknowledgement. A real Anglian Water login/export still needs account-holder validation; no live credentials were used during development.
+**Status:** version 0.1.1 includes a privacy audit and hardening. Twenty-four automated checks pass, covering session isolation, MFA, logout, error redaction, CSV integrity and clock changes. Browser checks verified the sample CSV and the incomplete-export acknowledgement. A real Anglian Water login/export still needs account-holder validation; no live credentials were used during development.
 
 ## What date ranges are available?
 
@@ -31,10 +31,13 @@ Only smart/enhanced smart meters are supported. New readings can be delayed. Thi
 
 This Docker version is **not browser-only**. Credentials travel browser → your server → Anglian Water and its Microsoft identity service. If you use Cloudflare Tunnel, Cloudflare also terminates HTTPS in that path. Use an HTTPS hostname and a trusted server; server administrators can technically inspect process memory.
 
-- Each browser session gets a random, HttpOnly, SameSite=Strict cookie. It is Secure when `APP_ORIGIN` is HTTPS.
+- Each browser session gets a random, HttpOnly, SameSite=Strict session cookie with no persistent expiry. It is Secure when `APP_ORIGIN` is HTTPS.
 - Password references are discarded after the initial login attempt, including when MFA is pending. The app never writes passwords to disk or places them in URLs, configuration or browser storage. This is not a promise of forensic memory erasure.
 - Cookies/tokens needed for Anglian Water are retained in server memory for up to 30 minutes of inactivity. Logout and container restart clear them. Expired sessions are removed by a 30-second cleanup task.
-- Upstream diagnostic logging and HTTP access logs are disabled to prevent sensitive payload logging.
+- Production Python logging and Docker log storage are disabled. Compose disables process swap and core dumps.
+- The server allowlists timestamps, numeric volumes and anonymous meter labels. Extra API metadata and real meter serial numbers never reach the page or CSV. Email/account/password inputs clear on submission.
+- Identity claims and login cookies are discarded after authentication; only tokens and the identifiers needed for usage requests remain in memory until logout/expiry.
+- See [the privacy audit](docs/PRIVACY.md) for scope, tests and limits, including browser-managed password storage, Cloudflare and host-level snapshots.
 - Readings are returned to the user's page and converted into CSV locally. They are not saved on the server. Responses use `Cache-Control: no-store`; no analytics, remote scripts, fonts or tracking are included.
 - The app uses same-origin POST checks, a custom request header, bounded request sizes, login/MFA rate limits and fixed upstream endpoints.
 - There is **no app-level user directory**. Each visitor signs into their own Anglian Water account. Place the hostname behind your existing Cloudflare Access policy if access should be private.
@@ -59,10 +62,10 @@ Set these Portainer variables:
 | --- | --- |
 | `APP_ORIGIN` | `https://water.devnull.co.uk` |
 | `HOST_PORT` | `8011`, allocated to this stack after checking the live port list |
-| `IMAGE_TAG` | `0.1.0`, or an immutable `sha-...` image tag |
+| `IMAGE_TAG` | `0.1.1`, or an immutable `sha-...` image tag |
 | `BIND_ADDRESS` | A Mobius interface reachable by the tunnel; default `0.0.0.0` |
 
-The image is built by GitHub Actions and published publicly to `ghcr.io/devnulluk/anglian-water-csv`, so Portainer needs no registry credentials. The GitHub source repository remains private. Container port is `8080`; health check is `/health`.
+The image is built by GitHub Actions and published publicly to `ghcr.io/devnulluk/anglian-water-csv`, so Portainer needs no registry credentials. The GitHub source repository is public. Container port is `8080`; health check is `/health`.
 
 Point the Cloudflare Tunnel hostname `water.devnull.co.uk` at `http://10.30.30.2:8011`. That address returned a healthy response on 15 September 2026 and matches the existing Mobius tunnel targets. Portainer's displayed `10.30.0.2` address was not reachable from the development machine. `APP_ORIGIN` must match the browser's exact origin, with no path. A raw-IP browser login will deliberately fail same-origin validation when the HTTPS hostname is configured.
 
@@ -90,7 +93,7 @@ UTF-8 with BOM, CRLF line endings and quoted fields:
 
 | Column | Meaning |
 | --- | --- |
-| `meter_serial_number` | Meter reported by the service |
+| `meter_label` | Anonymous label such as Meter 1; real serial numbers are excluded. Labels apply to the current response and may change between exports. |
 | `interval_start_utc` / `interval_end_utc` | Unambiguous hour boundaries |
 | `interval_start_europe_london` | UK wall-clock label; use UTC columns to distinguish repeated autumn hours |
 | `source_read_at` | Unmodified upstream reading timestamp |

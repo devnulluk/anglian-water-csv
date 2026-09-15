@@ -8,9 +8,15 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true
-    tmpfs: [/tmp]
+    tmpfs: ["/tmp:size=16m,mode=700,uid=10001,gid=10001"]
+    ulimits:
+      core: 0
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: none
     networks: [water-ledger]
 networks:
   water-ledger:

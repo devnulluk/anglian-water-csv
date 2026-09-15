@@ -51,15 +51,17 @@ async function refresh() {
 }
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault(); clear(); $('connect').disabled = true; status('Signing in securely with Anglian Water…');
-  let password = $('password').value; $('password').value = '';
-  try { const result = await message('login', { username: $('username').value, password, account: $('account').value }); status(result.status === 'mfa' ? 'Enter the verification code sent by Anglian Water.' : 'Connected. Choose your dates and load your readings.'); await refresh(); if (result.status === 'mfa') $('code').focus(); }
+  let credentials = { username: $('username').value, password: $('password').value, account: $('account').value };
+  for (const id of ['username', 'password', 'account']) $(id).value = '';
+  try { const result = await message('login', credentials); status(result.status === 'mfa' ? 'Enter the verification code sent by Anglian Water.' : 'Connected. Choose your dates and load your readings.'); await refresh(); if (result.status === 'mfa') $('code').focus(); }
   catch (e) { status(e.message, true); }
-  finally { password = ''; $('connect').disabled = false; }
+  finally { credentials = null; $('connect').disabled = false; }
 });
 $('mfa-form').addEventListener('submit', async event => {
   event.preventDefault(); $('verify').disabled = true; status('Verifying your code…');
-  try { await message('mfa', { code: $('code').value }); $('code').value = ''; await refresh(); status('Connected. Choose your dates and load your readings.'); }
-  catch(e) { status(e.message, true); } finally { $('verify').disabled = false; }
+  let code = $('code').value; $('code').value = '';
+  try { await message('mfa', { code }); await refresh(); status('Connected. Choose your dates and load your readings.'); }
+  catch(e) { status(e.message, true); } finally { code = ''; $('verify').disabled = false; }
 });
 $('disconnect').addEventListener('click', async () => { clear(); $('password').value = ''; $('username').value = ''; $('account').value = ''; $('code').value = ''; try { await message('logout'); await refresh(); status('Signed out. Your server session and displayed readings have been cleared.'); } catch(e) { status(e.message, true); } });
 $('load').addEventListener('click', async () => {
@@ -82,6 +84,7 @@ $('download').addEventListener('click', () => {
   status(`${sample ? 'Sample CSV' : 'CSV'} download started — ${selection.rows.length} readings${selection.missing ? ', incomplete coverage' : ''}.`);
 });
 const yesterday = new Date(Date.now() - 86400000); $('end').value = londonWall(yesterday.getTime()).slice(0, 10); $('start').value = londonWall(yesterday.getTime() - 6 * 86400000).slice(0, 10);
+window.addEventListener('pagehide', () => { for (const id of ['username', 'password', 'account', 'code']) $(id).value = ''; });
 window.addEventListener('focus', refresh);
 setInterval(refresh, 30000);
 await refresh();

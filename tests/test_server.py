@@ -153,3 +153,44 @@ async def test_https_session_cookie_is_secure():
     async with TestClient(TestServer(app)) as client:
         response = await login(client)
         assert response.cookies[server.COOKIE]['secure']
+
+@pytest.mark.asyncio
+async def test_usage_response_removes_identity_metadata(client, monkeypatch):
+    async def send(*args, **kwargs):
+        return {'email': 'private@example.test', 'result': {'address': 'PRIVATE ADDRESS', 'records': [
+            {'account': '999999999', 'meters': [{'meter_serial_number': 'PRIVATE-SERIAL',
+              'read_at': '2026-09-01T01:00:00Z', 'consumption': '12.5', 'read': 123,
+              'customer': {'name': 'PRIVATE NAME'}, 'token': 'PRIVATE TOKEN'}]}]}}
+    monkeypatch.setattr(server.API, 'send_request', send)
+    await login(client)
+    response = await client.post('/api/readings', headers=HEADERS, json={})
+    assert response.status == 200
+    assert (await response.json())['data'] == {'result': {'records': [{'meters': [{
+        'meter_serial_number': 'Meter 1', 'read_at': '2026-09-01T01:00:00Z',
+        'consumption': 12.5, 'read': 123.0}]}]}}
+    text = await response.text()
+    assert all(value not in text for value in ['PRIVATE', '999999999', 'private@example.test'])
+
+@pytest.mark.parametrize('field,value', [('read_at', 'private@example.test'), ('consumption', {'password': 'private'}), ('read', 'NaN')])
+def test_usage_allowlist_rejects_non_usage_values(field, value):
+    meter = {'meter_serial_number': 'serial', 'read_at': '2026-09-01T01:00:00Z', 'consumption': 1, 'read': 2}
+    meter[field] = value
+    with pytest.raises((ValueError, TypeError)):
+        server.usage_only({'records': [{'meters': [meter]}]})
+
+@pytest.mark.asyncio
+async def test_auth_minimization_and_complete_disposal():
+    async with aiohttp.ClientSession() as http:
+        auth = server.PrivateAuth('private@example.test', 'password', session=http)
+        auth.auth_data = {'access_token': 'needed', 'refresh_token': 'needed-refresh',
+            'extension_business_partner_number': 'needed-partner', 'name': 'PRIVATE', 'id_token': 'PRIVATE'}
+        auth._cookie_cache['secret'] = 'PRIVATE'
+        http.cookie_jar.update_cookies({'upstream-secret': 'PRIVATE'})
+        auth.minimize()
+        assert set(auth.auth_data) == {'access_token', 'refresh_token', 'extension_business_partner_number'}
+        assert auth.username == auth._password == ''
+        assert not auth._cookie_cache and not http.cookie_jar
+        item = server.Session(http, auth, '123456789')
+        await item.close()
+        assert item.account == '' and http.closed
+        assert auth.__dict__ == {'_password': '', 'auth_data': None, '_refresh_token': None}

@@ -3,6 +3,8 @@ import asyncio
 import contextlib
 import logging
 import os
+import math
+import re
 import secrets
 import time
 from collections import deque
@@ -31,7 +33,67 @@ SECURE = web.AppKey('secure', bool)
 FACTORY = web.AppKey('auth_factory', object)
 ATTEMPTS = web.AppKey('attempts', deque)
 
-@dataclass
+class PrivateAuth(MSOB2CAuth):
+    """Discard identity claims and login artifacts after authentication/refresh."""
+    def minimize(self):
+        if self.auth_data:
+            self.auth_data = {k: v for k, v in self.auth_data.items() if k in {
+                'access_token', 'refresh_token', 'extension_business_partner_number'}}
+        self.username = self._password = ''
+        for key in ('_pkce_verifier', '_pkce_challenge', '_state', '_csrf_token',
+                    '_trans_id', '_mfa_readonly_email'):
+            setattr(self, key, None)
+        self._cookie_cache.clear()
+        self._auth_session.cookie_jar.clear()
+
+    async def send_login_request(self):
+        await super().send_login_request()
+        if self.access_token:
+            self.minimize()
+
+    async def send_mfa_request(self, code):
+        await super().send_mfa_request(code)
+        if self.access_token:
+            self.minimize()
+
+    async def send_refresh_request(self):
+        await super().send_refresh_request()
+        self.minimize()
+
+def usage_only(data):
+    """Allowlist usage scalars; never forward metadata or real meter identifiers."""
+    body = data.get('result', data) if isinstance(data, dict) else data
+    records = body.get('records', body) if isinstance(body, dict) else body
+    if not isinstance(records, list):
+        raise ValueError('Invalid usage schema')
+    labels, output = {}, []
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get('meters'), list):
+            raise ValueError('Invalid usage schema')
+        meters = []
+        for meter in record['meters']:
+            if not isinstance(meter, dict):
+                raise ValueError('Invalid usage schema')
+            serial = meter.get('meter_serial_number')
+            if type(serial) not in (str, int) or not str(serial).strip():
+                raise ValueError('Invalid meter')
+            label = labels.setdefault(str(serial), f'Meter {len(labels) + 1}')
+            timestamp = meter.get('read_at')
+            if not isinstance(timestamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?', timestamp):
+                raise ValueError('Invalid timestamp')
+            clean = {'meter_serial_number': label, 'read_at': timestamp}
+            for key in ('consumption', 'read'):
+                value = meter.get(key)
+                if type(value) not in (str, int, float):
+                    raise ValueError('Invalid usage number')
+                clean[key] = float(value)
+                if not math.isfinite(clean[key]):
+                    raise ValueError('Invalid usage number')
+            meters.append(clean)
+        output.append({'meters': meters})
+    return {'result': {'records': output}}
+
+@dataclass(repr=False)
 class Session:
     http: aiohttp.ClientSession
     auth: object
@@ -43,10 +105,12 @@ class Session:
     mfa_attempts: int = 0
 
     async def close(self):
+        self.auth.__dict__.clear()
         self.auth._password = ''
         self.auth.auth_data = None
         self.auth._refresh_token = None
         self.account = ''
+        self.http.cookie_jar.clear()
         await self.http.close()
 
 def problem(text, status=400):
@@ -122,7 +186,7 @@ async def get_session(request):
     return item
 
 def with_cookie(response, request, sid):
-    response.set_cookie(COOKIE, sid, httponly=True, secure=request.app[SECURE], samesite='Strict', path='/', max_age=TTL)
+    response.set_cookie(COOKIE, sid, httponly=True, secure=request.app[SECURE], samesite='Strict', path='/')
     return response
 
 async def login(request):
@@ -159,8 +223,12 @@ async def login(request):
     except Exception as exc:
         await item.close()
         return error_response(exc)
+    except BaseException:
+        await item.close()
+        raise
     finally:
         auth._password = ''
+        auth.username = ''
         values.clear()
         password = ''
     request.app[STORE][sid] = item
@@ -219,7 +287,7 @@ async def readings(request):
         if request.app[STORE].get(request.cookies.get(COOKIE)) is not item:
             return problem('You signed out while the readings were loading.', 401)
         item.expires = time.monotonic() + TTL
-    return with_cookie(web.json_response({'ok': True, 'data': data}), request, request.cookies[COOKIE])
+    return with_cookie(web.json_response({'ok': True, 'data': usage_only(data)}), request, request.cookies[COOKIE])
 
 async def cleanup(app):
     async def sweep():
@@ -238,7 +306,7 @@ async def cleanup(app):
         await item.close()
     app[STORE].clear()
 
-def create_app(origin=None, secure=None, auth_factory=MSOB2CAuth):
+def create_app(origin=None, secure=None, auth_factory=PrivateAuth):
     app = web.Application(middlewares=[security], client_max_size=16384)
     app[ORIGIN] = (origin or os.getenv('APP_ORIGIN', 'http://localhost:8080')).rstrip('/')
     parsed = urlsplit(app[ORIGIN])
@@ -265,4 +333,6 @@ def create_app(origin=None, secure=None, auth_factory=MSOB2CAuth):
     return app
 
 if __name__ == '__main__':
+    # Parser errors and third-party diagnostics can also contain request data.
+    logging.disable(logging.CRITICAL)
     web.run_app(create_app(), host='0.0.0.0', port=int(os.getenv('PORT', '8080')), access_log=None, print=None)

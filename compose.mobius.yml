@@ -1,6 +1,6 @@
 services:
   water-ledger:
-    image: ghcr.io/devnulluk/anglian-water-csv:${IMAGE_TAG:-0.1.0}
+    image: ghcr.io/devnulluk/anglian-water-csv:${IMAGE_TAG:-0.1.1}
     container_name: anglian-water-csv
     restart: unless-stopped
     environment:
@@ -9,16 +9,16 @@ services:
     ports:
       - "${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-8011}:8080"
     read_only: true
-    tmpfs: [/tmp]
+    tmpfs: ["/tmp:size=16m,mode=700,uid=10001,gid=10001"]
+    ulimits:
+      core: 0
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 256m
+    memswap_limit: 256m
     cpus: 1
     logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
+      driver: none
     networks: [water-ledger]
 networks:
   water-ledger:

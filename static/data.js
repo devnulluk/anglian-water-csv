@@ -67,6 +67,6 @@ function cell(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 export function csv(rows) {
-  const header = ['meter_serial_number', 'interval_start_utc', 'interval_end_utc', 'interval_start_europe_london', 'source_read_at', 'consumption_litres', 'cumulative_read_m3', 'quality'];
+  const header = ['meter_label', 'interval_start_utc', 'interval_end_utc', 'interval_start_europe_london', 'source_read_at', 'consumption_litres', 'cumulative_read_m3', 'quality'];
   return '\uFEFF' + [header, ...rows.map(r => [r.meter, new Date(r.start).toISOString(), new Date(r.end).toISOString(), londonWall(r.start), r.source, r.litres, r.cumulative, r.litres < 0 ? 'negative_consumption' : 'reported'])].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
 }
