@@ -1,0 +1,155 @@
+import asyncio
+import time
+
+import aiohttp
+import pytest
+import pytest_asyncio
+from aiohttp.test_utils import TestClient, TestServer
+
+import server
+
+ORIGIN = 'https://water.devnull.co.uk'
+HEADERS = {'Origin': ORIGIN, 'X-Water-Ledger': '1'}
+
+class FakeAuth:
+    def __init__(self, username, password, session):
+        self.username = username
+        self._password = password
+        self.auth_data = None
+        self._refresh_token = 'fake-refresh'
+        self.http = session
+        self.access_token = None
+
+    async def send_login_request(self):
+        if self.username == 'mfa@example.test':
+            raise server.aw_errors.MFARequiredError(readonly_email=self.username)
+        if self.username == 'bad@example.test':
+            raise server.aw_errors.SelfAssertedError('secret-password must not appear')
+        self.access_token = 'fake-access'
+
+    async def send_mfa_request(self, code):
+        if code != '123456':
+            raise server.aw_errors.MFARequiredError(readonly_email=self.username)
+        self.access_token = 'fake-access'
+
+@pytest_asyncio.fixture
+async def client():
+    app = server.create_app(origin=ORIGIN, secure=False, auth_factory=FakeAuth)
+    async with TestClient(TestServer(app), cookie_jar=aiohttp.CookieJar(unsafe=True)) as client:
+        yield client
+
+async def login(client, username='person@example.test'):
+    return await client.post('/api/login', headers=HEADERS, json={'username': username, 'password': 'secret-password', 'account': '123456789'})
+
+@pytest.mark.asyncio
+async def test_login_cookie_password_disposal_and_logout(client):
+    response = await login(client)
+    assert response.status == 200
+    assert response.cookies[server.COOKIE]['httponly']
+    assert response.cookies[server.COOKIE]['samesite'] == 'Strict'
+    item = next(iter(client.app[server.STORE].values()))
+    assert item.auth._password == ''
+    assert (await (await client.get('/api/session')).json())['status'] == 'connected'
+    assert 'secret' not in await response.text()
+    await client.post('/api/logout', headers=HEADERS, json={})
+    assert item.http.closed
+    assert not client.app[server.STORE]
+    assert (await client.post('/api/readings', headers=HEADERS, json={})).status == 401
+
+@pytest.mark.asyncio
+async def test_mfa_and_invalid_code_recovery(client):
+    response = await login(client, 'mfa@example.test')
+    assert (await response.json())['status'] == 'mfa'
+    assert next(iter(client.app[server.STORE].values())).auth._password == ''
+    assert (await client.post('/api/readings', headers=HEADERS, json={})).status == 401
+    assert (await client.post('/api/mfa', headers=HEADERS, json={'code': '000000'})).status == 401
+    response = await client.post('/api/mfa', headers=HEADERS, json={'code': '123456'})
+    assert (await response.json())['status'] == 'connected'
+
+@pytest.mark.asyncio
+async def test_wrong_origin_no_header_and_validation(client):
+    for headers in [{}, {'Origin': 'https://evil.test', 'X-Water-Ledger': '1'}, {'Origin': ORIGIN}]:
+        assert (await client.post('/api/login', headers=headers, json={})).status == 403
+    assert (await client.post('/api/login', headers=HEADERS, json=[])).status == 400
+    assert (await client.post('/api/login', headers=HEADERS, json={'username': 'a', 'password': 'b', 'account': '../bad'})).status == 400
+    assert not client.app[server.STORE]
+
+@pytest.mark.asyncio
+async def test_no_secret_in_errors_and_no_session_after_failure(client):
+    response = await login(client, 'bad@example.test')
+    assert response.status == 401
+    assert 'secret-password' not in await response.text()
+    assert not client.app[server.STORE]
+
+@pytest.mark.asyncio
+async def test_expired_session_is_closed(client):
+    await login(client)
+    item = next(iter(client.app[server.STORE].values()))
+    item.expires = time.monotonic() - 1
+    assert (await (await client.get('/api/session')).json())['status'] == 'disconnected'
+    assert item.http.closed
+
+@pytest.mark.asyncio
+async def test_users_are_isolated_and_only_hourly_endpoint_is_used(client, monkeypatch):
+    calls = []
+    async def send(api, endpoint, body, account, **kwargs):
+        calls.append((endpoint, account, kwargs))
+        return {'result': {'records': []}}
+    monkeypatch.setattr(server.API, 'send_request', send)
+    await login(client)
+    async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as other:
+        assert (await other.post(client.make_url('/api/readings'), headers=HEADERS, json={})).status == 401
+        assert (await (await other.get(client.make_url('/api/session'))).json())['status'] == 'disconnected'
+    response = await client.post('/api/readings', headers=HEADERS, json={})
+    assert response.status == 200
+    assert calls == [('get_usage_details', '123456789', {'GRANULARITY': '10'})]
+    assert (await client.post('/api/readings', headers=HEADERS, json={})).status == 429
+
+@pytest.mark.asyncio
+async def test_no_store_csp_and_no_source_exposure(client):
+    for path in ['/', '/app.js', '/health', '/api/session', '/server.py', '/.env']:
+        response = await client.get(path)
+        assert response.headers['Cache-Control'] == 'no-store'
+        assert "frame-ancestors 'none'" in response.headers['Content-Security-Policy']
+        if path in ['/server.py', '/.env']:
+            assert response.status == 404
+
+@pytest.mark.asyncio
+async def test_logout_suppresses_inflight_readings(client, monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+    async def send(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return {'private': 'data'}
+    monkeypatch.setattr(server.API, 'send_request', send)
+    await login(client)
+    loading = asyncio.create_task(client.post('/api/readings', headers=HEADERS, json={}))
+    await started.wait()
+    logout = asyncio.create_task(client.post('/api/logout', headers=HEADERS, json={}))
+    for _ in range(20):
+        if not client.app[server.STORE]:
+            break
+        await asyncio.sleep(.01)
+    release.set()
+    response = await loading
+    assert response.status == 401
+    assert 'private' not in await response.text()
+    assert (await logout).status == 200
+
+def test_origin_validation():
+    with pytest.raises(ValueError):
+        server.create_app(origin='https://example.test/path')
+
+@pytest.mark.asyncio
+async def test_mfa_attempt_limit(client):
+    await login(client, 'mfa@example.test')
+    for _ in range(5):
+        assert (await client.post('/api/mfa', headers=HEADERS, json={'code': '000000'})).status == 401
+    assert (await client.post('/api/mfa', headers=HEADERS, json={'code': '123456'})).status == 429
+
+@pytest.mark.asyncio
+async def test_https_session_cookie_is_secure():
+    app = server.create_app(origin=ORIGIN, auth_factory=FakeAuth)
+    async with TestClient(TestServer(app)) as client:
+        response = await login(client)
+        assert response.cookies[server.COOKIE]['secure']

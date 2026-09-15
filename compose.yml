@@ -1,0 +1,17 @@
+services:
+  water-ledger:
+    build: .
+    restart: unless-stopped
+    environment:
+      APP_ORIGIN: http://localhost:8080
+      TZ: Europe/London
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [water-ledger]
+networks:
+  water-ledger:
+    driver: bridge

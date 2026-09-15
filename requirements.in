@@ -1,0 +1,2 @@
+aiohttp>=3.12,<4
+pyanglianwater==3.3.2
