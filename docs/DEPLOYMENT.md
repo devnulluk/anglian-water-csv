@@ -4,6 +4,8 @@
 - Image: `ghcr.io/devnulluk/anglian-water-csv:0.1.1` (public).
 - Application release: `v0.1.1` (privacy hardening).
 - Container: `anglian-water-csv`, non-root, read-only filesystem.
+- Privacy release verified on Mobius: image `0.1.1`, Docker log driver `none`, empty `LogPath`, no persistent mounts, core limit 0, and both memory/memory-plus-swap limits 268435456 bytes.
+- Public HTTPS health check passed after redeployment; served HTML and JavaScript matched the release. Sample preview showed 168 readings and 1,057 litres.
 - Published port: `8011` → `8080`. Verified unused before deployment.
 - Private bridge network: `anglian-water-csv_water-ledger`.
 - Health: container healthy; `http://10.30.30.2:8011/health` returned `{"status":"ok"}`.

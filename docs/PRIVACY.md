@@ -29,6 +29,7 @@ There is no localStorage, sessionStorage, IndexedDB, analytics or external front
 - 24 automated tests: 16 Python and 8 JavaScript. Includes authenticated response filtering with planted private metadata, rejection of private/non-numeric values in usage fields, auth cleanup, session isolation, logout, expiry, error redaction, MFA and CSV/DST correctness.
 - Git history scan found no non-fixture email addresses, private keys, GitHub/AWS credentials or JWTs in committed file contents. Manual review found only synthetic account/password fixtures. This is a scoped review, not proof that every possible secret format can be detected.
 - Docker build uses explicit application/dependency/static copies and an allowlist `.dockerignore`; Git metadata, tests, local work and configuration files are excluded from the image.
+- Live Mobius inspection confirmed the 0.1.1 image, log driver `none`, empty log path, no persistent mounts, read-only root, core limit 0 and matching memory/swap limits. Public HTTPS health and release assets were verified; the sample preview still worked.
 - Public source includes deployment hostnames, private-network IP addresses and normal Git commit attribution. These are infrastructure documentation, not Anglian Water customer identifiers.
 
 ## Limits: what “not saved” does not guarantee
