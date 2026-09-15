@@ -6,6 +6,7 @@
 - Container: `anglian-water-csv`, non-root, read-only filesystem.
 - Privacy release verified on Mobius: image `0.1.2`, Docker log driver `none`, empty `LogPath`, no persistent mounts, core limit 0, and both memory/memory-plus-swap limits 268435456 bytes.
 - Public HTTPS health check passed after redeployment; served HTML and JavaScript matched the release. Sample preview showed 168 readings and 1,057 litres.
+- Release 0.1.2 fixes provider cookie quoting. A synthetic invalid login through the public hostname returned HTTP 401 with the expected safe JSON message, replacing the previous plain-text HTTP 502 failure. All 29 automated tests and the image build passed. Real-account login/export still requires account-holder validation.
 - Published port: `8011` → `8080`. Verified unused before deployment.
 - Private bridge network: `anglian-water-csv_water-ledger`.
 - Health: container healthy; `http://10.30.30.2:8011/health` returned `{"status":"ok"}`.
