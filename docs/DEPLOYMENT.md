@@ -7,8 +7,9 @@
 - Published port: `8011` → `8080`. Verified unused before deployment.
 - Private bridge network: `anglian-water-csv_water-ledger`.
 - Health: container healthy; `http://10.30.30.2:8011/health` returned `{"status":"ok"}`.
-- Intended HTTPS origin: `https://water.devnull.co.uk`.
-- Tunnel: existing `mobius` Cloudflare Tunnel.
+- Public HTTPS origin: `https://water.devnull.co.uk`, published with owner approval on 15 September 2026.
+- Tunnel: existing `mobius` Cloudflare Tunnel, routing to `http://10.30.30.2:8011`.
+- Public verification: Cloudflare DNS resolves; HTTPS health endpoint returned `{"status":"ok"}`. Local DNS caches may take time to refresh.
 - Persistent storage: none. Sessions live in memory and expire; CSV files are downloaded by the user.
 - GitHub repository: private. Container package: public with owner approval.
 
