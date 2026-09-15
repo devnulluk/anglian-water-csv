@@ -1,6 +1,6 @@
 # Water Ledger
 
-A small self-hosted web app that signs in to Anglian Water and exports **available hourly smart-meter usage as CSV**. Runs as one Docker container, with a Portainer configuration for Mobius.
+A small self-hosted web app that signs in to Anglian Water and exports **available hourly smart-meter usage as CSV**. Runs as one Docker container with Docker Compose.
 
 ## Use
 
@@ -29,7 +29,7 @@ Only smart/enhanced smart meters are supported. New readings can be delayed. Thi
 
 ## Privacy and authentication
 
-This Docker version is **not browser-only**. Credentials travel browser → your server → Anglian Water and its Microsoft identity service. If you use Cloudflare Tunnel, Cloudflare also terminates HTTPS in that path. Use an HTTPS hostname and a trusted server; server administrators can technically inspect process memory.
+This Docker version is **not browser-only**. Credentials travel browser → your server → Anglian Water and its Microsoft identity service. Any reverse proxy that terminates HTTPS also handles traffic in that path. Use an HTTPS hostname and a trusted server; server administrators can technically inspect process memory.
 
 - Each browser session gets a random, HttpOnly, SameSite=Strict session cookie with no persistent expiry. It is Secure when `APP_ORIGIN` is HTTPS.
 - Password references are discarded after the initial login attempt, including when MFA is pending. The app never writes passwords to disk or places them in URLs, configuration or browser storage. This is not a promise of forensic memory erasure.
@@ -37,39 +37,73 @@ This Docker version is **not browser-only**. Credentials travel browser → your
 - Production Python logging and Docker log storage are disabled. Compose disables process swap and core dumps.
 - The server allowlists timestamps, numeric volumes and anonymous meter labels. Extra API metadata and real meter serial numbers never reach the page or CSV. Email/account/password inputs clear on submission.
 - Identity claims and login cookies are discarded after authentication; only tokens and the identifiers needed for usage requests remain in memory until logout/expiry.
-- See [the privacy audit](docs/PRIVACY.md) for scope, tests and limits, including browser-managed password storage, Cloudflare and host-level snapshots.
+- See [the privacy audit](docs/PRIVACY.md) for scope, tests and limits, including browser-managed password storage, proxy providers and host-level snapshots.
 - Readings are returned to the user's page and converted into CSV locally. They are not saved on the server. Responses use `Cache-Control: no-store`; no analytics, remote scripts, fonts or tracking are included.
 - The app uses same-origin POST checks, a custom request header, bounded request sizes, login/MFA rate limits and fixed upstream endpoints.
-- There is **no app-level user directory**. Each visitor signs into their own Anglian Water account. Place the hostname behind your existing Cloudflare Access policy if access should be private.
+- There is **no app-level user directory**. Each visitor signs into their own Anglian Water account. Use an authentication gateway or private network if access should be restricted.
 
 The app runs one process. Do not add multiple workers/replicas without first implementing shared, protected session storage.
 
-## Local Docker
+## Install with Docker Compose
+
+Install Docker with the Compose plugin, then clone the repository:
 
 ```sh
+git clone https://github.com/devnulluk/anglian-water-csv.git
+cd anglian-water-csv
 docker compose up -d --build
 ```
 
-Open [localhost:8080](http://localhost:8080). This development mapping is loopback-only. Sign-in and export use the real Anglian Water service; use the sample button for a no-login demo.
+Open [localhost:8080](http://localhost:8080). The supplied configuration binds to the local machine only. Use the sample button to try the app without signing in.
 
-## Mobius / Portainer
+To stop the app:
 
-Use [`compose.mobius.yml`](compose.mobius.yml) as a new stack called `anglian-water-csv`.
+```sh
+docker compose down
+```
 
-Set these Portainer variables:
+## Host over HTTPS
 
-| Variable | Value |
-| --- | --- |
-| `APP_ORIGIN` | `https://water.devnull.co.uk` |
-| `HOST_PORT` | `8011`, allocated to this stack after checking the live port list |
-| `IMAGE_TAG` | `0.1.1`, or an immutable `sha-...` image tag |
-| `BIND_ADDRESS` | A Mobius interface reachable by the tunnel; default `0.0.0.0` |
+For access from other devices, place the app behind an HTTPS reverse proxy. Set `APP_ORIGIN` to the exact address visitors will use, such as `https://water.example.com`, with no trailing path. The app validates sign-in requests against this origin.
 
-The image is built by GitHub Actions and published publicly to `ghcr.io/devnulluk/anglian-water-csv`, so Portainer needs no registry credentials. The GitHub source repository is public. Container port is `8080`; health check is `/health`.
+You can use the prebuilt public image instead of building from source. Save this as `compose.yml` in a new directory:
 
-Point the Cloudflare Tunnel hostname `water.devnull.co.uk` at `http://10.30.30.2:8011`. That address returned a healthy response on 15 September 2026 and matches the existing Mobius tunnel targets. Portainer's displayed `10.30.0.2` address was not reachable from the development machine. `APP_ORIGIN` must match the browser's exact origin, with no path. A raw-IP browser login will deliberately fail same-origin validation when the HTTPS hostname is configured.
+```yaml
+services:
+  water-ledger:
+    image: ghcr.io/devnulluk/anglian-water-csv:0.1.1
+    restart: unless-stopped
+    environment:
+      APP_ORIGIN: https://water.example.com
+      TZ: Europe/London
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=700,uid=10001,gid=10001"]
+    ulimits:
+      core: 0
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: none
+```
 
-No persistent volume is required: this app intentionally stores no account credentials or readings. The container is non-root, has a read-only filesystem, drops Linux capabilities, and uses a dedicated bridge network. Preserve the Compose definition and chosen image tag; there is no application database to back up. Downloaded CSV files are the user's archive. Restarting the container signs everyone out.
+Replace `https://water.example.com` with your hostname, then run:
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+Configure a reverse proxy running on the same host to forward that hostname to `http://127.0.0.1:8080`. If your proxy runs in another container, connect both containers to a shared Docker network and forward to `http://water-ledger:8080`; the proxy container's own loopback address will not reach this app. The health endpoint is `/health`.
+
+No registry login or persistent volume is required. The container runs as a non-root user with a read-only filesystem. There is no application database to back up; downloaded CSV files are your archive. Restarting or updating signs everyone out.
+
+### Updates
+
+Choose a tested release tag and change the `image` version in your Compose file, then run `docker compose pull` and `docker compose up -d`. Keep the previous tag to roll back if needed. For a source installation, pull the latest source and run `docker compose up -d --build`.
 
 ## Development and checks
 
