@@ -194,3 +194,24 @@ async def test_auth_minimization_and_complete_disposal():
         await item.close()
         assert item.account == '' and http.closed
         assert auth.__dict__ == {'_password': '', 'auth_data': None, '_refresh_token': None}
+
+@pytest.mark.asyncio
+async def test_provider_cookie_values_are_not_quoted(client):
+    await login(client)
+    item = next(iter(client.app[server.STORE].values()))
+    from yarl import URL
+    url = URL('https://login.example.test/')
+    item.http.cookie_jar.update_cookies({'provider-session': 'value/with=padding'}, response_url=url)
+    cookie = item.http.cookie_jar.filter_cookies(url)['provider-session']
+    assert cookie.coded_value == 'value/with=padding'
+
+@pytest.mark.asyncio
+async def test_upstream_errors_preserve_safe_json(client, monkeypatch):
+    async def fail(auth):
+        raise aiohttp.ClientConnectionError('PRIVATE upstream connection detail')
+    monkeypatch.setattr(FakeAuth, 'send_login_request', fail)
+    response = await login(client)
+    assert response.status == 424
+    assert response.content_type == 'application/json'
+    assert (await response.json())['error'] == 'Could not reach Anglian Water. Please try again later.'
+    assert not client.app[server.STORE]

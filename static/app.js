@@ -1,4 +1,5 @@
 import { normalize, select, csv, londonWall } from './data.js';
+import { readResponse } from './api.js';
 const $ = id => document.getElementById(id);
 let readings = [], selection = null, sample = false, busy = false, generation = 0;
 function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
@@ -6,10 +7,7 @@ async function message(type, body = {}) {
   let response;
   try { response = await fetch(`/api/${type}`, type === 'session' ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Water-Ledger': '1' }, body: JSON.stringify(body), cache: 'no-store', signal: AbortSignal.timeout(100000) }); }
   catch { throw new Error('Could not reach this server. Check your connection and try again.'); }
-  let result;
-  try { result = await response.json(); } catch { throw new Error('The server did not return a valid response. Try again later.'); }
-  if (!response.ok || !result?.ok) throw new Error(result?.error || 'The request failed. Please try again.');
-  return result;
+  return readResponse(response);
 }
 function clear() { readings = []; selection = null; sample = false; generation++; $('preview').hidden = true; $('empty').hidden = false; $('demo-badge').hidden = true; $('meter').replaceChildren(new Option('All available meters', '')); $('download').disabled = true; }
 function downloadState() { $('download').disabled = busy || !selection?.rows.length || (selection.missing > 0 && !$('partial').checked); }

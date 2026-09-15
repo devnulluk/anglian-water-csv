@@ -125,14 +125,18 @@ def error_response(exc):
         return problem('Anglian Water could not sign you in. Check your email and password.', 401)
     if isinstance(exc, aw_errors.InvalidAccountIdError):
         return problem('That account number is not available to this login. Check the number on your bill.', 403)
+    # Use an application dependency failure rather than a gateway status: some
+    # reverse proxies replace 502 bodies, hiding our safe JSON error message.
+    if isinstance(exc, aiohttp.ContentTypeError):
+        return problem('Anglian Water returned an unexpected sign-in page. Please try again later.', 424)
     if isinstance(exc, (aiohttp.ClientError, TimeoutError)):
-        return problem('Could not reach Anglian Water. Please try again later.', 502)
+        return problem('Could not reach Anglian Water. Please try again later.', 424)
     if isinstance(exc, aw_errors.UnknownEndpointError):
         if exc.status == 429:
             return problem('Anglian Water is limiting requests. Wait a few minutes before retrying.', 429)
-        return problem('Anglian Water could not supply hourly data. Check your smart-meter account and try again later.', 502)
+        return problem('Anglian Water could not supply hourly data. Check your smart-meter account and try again later.', 424)
     # Never return upstream exception strings; they can contain private data.
-    return problem('Anglian Water returned an unexpected response. Try signing in again. No CSV was created.', 502)
+    return problem('Anglian Water returned an unexpected response. Try signing in again. No CSV was created.', 424)
 
 @web.middleware
 async def security(request, handler):
@@ -207,7 +211,10 @@ async def login(request):
     await drop(request)
     if len(request.app[STORE]) >= 100:
         return problem('The app has reached its session limit. Please try again later.', 503)
-    http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=45))
+    # Azure B2C rejects aiohttp's quoted cookie representation. Keep provider
+    # cookie values unchanged; this does not disable TLS or cookie scoping.
+    http = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(quote_cookie=False),
+                                 timeout=aiohttp.ClientTimeout(total=45))
     auth = request.app[FACTORY](username, password, session=http)
     item = Session(http, auth, account)
     sid = secrets.token_urlsafe(32)
@@ -325,7 +332,7 @@ def create_app(origin=None, secure=None, auth_factory=PrivateAuth):
     app.router.add_post('/api/readings', readings)
     async def asset(request):
         name = request.match_info.get('name', 'index.html')
-        if name not in {'index.html', 'app.js', 'data.js', 'styles.css', 'icon.svg'}:
+        if name not in {'index.html', 'app.js', 'api.js', 'data.js', 'styles.css', 'icon.svg'}:
             raise web.HTTPNotFound()
         return web.FileResponse(STATIC / name)
     app.router.add_get('/', asset)

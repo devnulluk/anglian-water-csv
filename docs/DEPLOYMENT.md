@@ -1,10 +1,10 @@
 # Mobius deployment record
 
 - Stack: `anglian-water-csv`, Portainer stack ID 207, environment Mobius (2).
-- Image: `ghcr.io/devnulluk/anglian-water-csv:0.1.1` (public).
-- Application release: `v0.1.1` (privacy hardening).
+- Image: `ghcr.io/devnulluk/anglian-water-csv:0.1.2` (public).
+- Application release: `v0.1.2` (privacy hardening).
 - Container: `anglian-water-csv`, non-root, read-only filesystem.
-- Privacy release verified on Mobius: image `0.1.1`, Docker log driver `none`, empty `LogPath`, no persistent mounts, core limit 0, and both memory/memory-plus-swap limits 268435456 bytes.
+- Privacy release verified on Mobius: image `0.1.2`, Docker log driver `none`, empty `LogPath`, no persistent mounts, core limit 0, and both memory/memory-plus-swap limits 268435456 bytes.
 - Public HTTPS health check passed after redeployment; served HTML and JavaScript matched the release. Sample preview showed 168 readings and 1,057 litres.
 - Published port: `8011` → `8080`. Verified unused before deployment.
 - Private bridge network: `anglian-water-csv_water-ledger`.
@@ -23,7 +23,7 @@
 4. Check container health and the HTTPS page; sign in again after a restart.
 5. To roll back, restore the previous version tag and redeploy. No database migration is involved.
 
-Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.1.1`.
+Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.1.2`.
 
 ## Validation still needed
 
