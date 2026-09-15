@@ -13,7 +13,7 @@ A small self-hosted web app that signs in to Anglian Water and exports **availab
 
 The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...csv`.
 
-**Status:** initial implementation. Automated checks cover session isolation, MFA, logout, error redaction, CSV integrity and clock changes. A real Anglian Water login/export still needs account-holder validation; no live credentials were used during development.
+**Status:** version 0.1.0 deployed and healthy on Mobius. Nineteen automated checks pass, covering session isolation, MFA, logout, error redaction, CSV integrity and clock changes. Browser checks verified the sample CSV and the incomplete-export acknowledgement. A real Anglian Water login/export still needs account-holder validation; no live credentials were used during development.
 
 ## What date ranges are available?
 
@@ -58,13 +58,13 @@ Set these Portainer variables:
 | Variable | Value |
 | --- | --- |
 | `APP_ORIGIN` | `https://water.devnull.co.uk` |
-| `HOST_PORT` | `8011` proposed; verify the live port list before deploying |
+| `HOST_PORT` | `8011`, allocated to this stack after checking the live port list |
 | `IMAGE_TAG` | `0.1.0`, or an immutable `sha-...` image tag |
 | `BIND_ADDRESS` | A Mobius interface reachable by the tunnel; default `0.0.0.0` |
 
-The image is built by GitHub Actions and published to `ghcr.io/devnulluk/anglian-water-csv`. A private package requires the existing GHCR registry credentials in Portainer. Container port is `8080`; health check is `/health`.
+The image is built by GitHub Actions and published publicly to `ghcr.io/devnulluk/anglian-water-csv`, so Portainer needs no registry credentials. The GitHub source repository remains private. Container port is `8080`; health check is `/health`.
 
-Point the Cloudflare Tunnel hostname `water.devnull.co.uk` at `http://<verified-mobius-address>:8011`. Existing notes have conflicting host addresses, so verify the tunnel target in the live environment. `APP_ORIGIN` must match the browser's exact origin, with no path. A raw-IP browser login will deliberately fail same-origin validation when the HTTPS hostname is configured.
+Point the Cloudflare Tunnel hostname `water.devnull.co.uk` at `http://10.30.30.2:8011`. That address returned a healthy response on 15 September 2026 and matches the existing Mobius tunnel targets. Portainer's displayed `10.30.0.2` address was not reachable from the development machine. `APP_ORIGIN` must match the browser's exact origin, with no path. A raw-IP browser login will deliberately fail same-origin validation when the HTTPS hostname is configured.
 
 No persistent volume is required: this app intentionally stores no account credentials or readings. The container is non-root, has a read-only filesystem, drops Linux capabilities, and uses a dedicated bridge network. Preserve the Compose definition and chosen image tag; there is no application database to back up. Downloaded CSV files are the user's archive. Restarting the container signs everyone out.
 
