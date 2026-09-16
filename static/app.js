@@ -1,7 +1,8 @@
-import { normalize, select, csv, londonWall } from './data.js';
+import { normalize, summarize, londonWall } from './data.js';
 import { readResponse } from './api.js';
+import { resolutions, exportFiles, zip } from './archive.js';
 const $ = id => document.getElementById(id);
-let readings = [], selection = null, sample = false, busy = false, generation = 0;
+let datasets = null, sample = false, busy = false, generation = 0;
 function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
 async function message(type, body = {}) {
   let response;
@@ -9,32 +10,55 @@ async function message(type, body = {}) {
   catch { throw new Error('Could not reach this server. Check your connection and try again.'); }
   return readResponse(response);
 }
-function clear() { readings = []; selection = null; sample = false; generation++; $('preview').hidden = true; $('empty').hidden = false; $('demo-badge').hidden = true; $('meter').replaceChildren(new Option('All available meters', '')); $('download').disabled = true; }
-function downloadState() { $('download').disabled = busy || !selection?.rows.length || (selection.missing > 0 && !$('partial').checked); }
+function clear() {
+  datasets = null; sample = false; generation++;
+  $('preview').hidden = true; $('empty').hidden = false; $('demo-badge').hidden = true;
+  $('download').disabled = true; $('partial').checked = false;
+  $('rows').replaceChildren(); $('history').replaceChildren();
+}
+function incomplete() {
+  return datasets && resolutions.some(r => datasets[r].status === 'error' || !datasets[r].rows.length || summarize(datasets[r].rows, r).missing > 0);
+}
+function downloadState() {
+  $('download').disabled = busy || !datasets || !resolutions.some(r => datasets[r].rows.length) || (incomplete() && !$('partial').checked);
+}
 function render() {
-  $('partial').checked = false;
-  try {
-    selection = select(readings, $('start').value, $('end').value, $('meter').value);
-    $('empty').hidden = true; $('preview').hidden = false;
-    $('total').textContent = selection.total.toLocaleString('en-GB', { maximumFractionDigits: 2 });
-    $('count').textContent = selection.rows.length.toLocaleString('en-GB');
-    $('coverage').textContent = !selection.rows.length ? 'No readings in this date range. Choose dates within the available history.' : selection.missing ? `${selection.missing.toLocaleString('en-GB')} expected meter-hours are missing. Missing hours are left out, never filled with zero.` : 'Every expected hour is present for the selected meters.';
-    $('partial-label').hidden = !selection.missing || !selection.rows.length;
-    $('rows').replaceChildren(...selection.rows.slice(0, 12).map(row => {
-      const tr = document.createElement('tr');
-      for (const value of [londonWall(row.start).replace('T', ' ').slice(0, 16), row.meter, row.litres.toLocaleString('en-GB')]) { const td = document.createElement('td'); td.textContent = value; tr.append(td); }
-      return tr;
-    }));
-    $('preview-note').textContent = `Showing the first ${Math.min(12, selection.rows.length)} readings. CSV includes all ${selection.rows.length}, with UTC timestamps to distinguish clock changes.`;
-    downloadState();
-  } catch (error) { selection = null; $('download').disabled = true; status(error.message, true); }
+  if (!datasets) return;
+  $('empty').hidden = true; $('preview').hidden = false;
+  $('history').replaceChildren(...resolutions.map(resolution => {
+    const dataset = datasets[resolution], summary = summarize(dataset.rows, resolution);
+    const div = document.createElement('div'); div.className = 'history-item';
+    const title = document.createElement('strong'); title.textContent = resolution[0].toUpperCase() + resolution.slice(1);
+    const detail = document.createElement('p'); detail.className = 'small';
+    detail.textContent = dataset.status === 'error' ? dataset.error : summary.count ? `${summary.count.toLocaleString('en-GB')} readings · ${summary.first} to ${summary.last}${summary.missing ? ` · ${summary.missing} missing periods within returned ranges` : ''}` : 'No readings returned.';
+    div.append(title, detail); return div;
+  }));
+  const resolution = $('resolution').value, dataset = datasets[resolution];
+  const summary = summarize(dataset.rows, resolution);
+  $('total').textContent = summary.total.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+  $('count').textContent = summary.count.toLocaleString('en-GB');
+  $('preview-heading').textContent = resolution === 'hourly' ? 'Hour starting (UK)' : 'Source reading date';
+  $('coverage').textContent = dataset.status === 'error' ? dataset.error : !summary.count ? 'No readings returned for this resolution.' : resolution === 'hourly' ? 'Hourly intervals use UK time; the CSV also includes UTC and the original timestamp.' : 'Dates are shown as reported by Anglian Water. The CSV preserves the full source timestamp.';
+  $('rows').replaceChildren(...dataset.rows.slice(0, 12).map(row => {
+    const tr = document.createElement('tr');
+    const when = resolution === 'hourly' ? londonWall(row.start).replace('T', ' ').slice(0, 16) : row.date;
+    for (const value of [when, row.meter, row.litres.toLocaleString('en-GB')]) { const td = document.createElement('td'); td.textContent = value; tr.append(td); }
+    return tr;
+  }));
+  $('preview-note').textContent = `Preview: first ${Math.min(12, summary.count)} ${resolution} readings. The ZIP includes all returned readings, all meters and all three resolutions.`;
+  $('partial-label').hidden = !incomplete(); downloadState();
 }
 function receive(payload) {
-  readings = normalize(payload);
-  $('meter').replaceChildren(new Option('All available meters', ''), ...[...new Set(readings.map(r => r.meter))].map(m => new Option(m, m)));
-  if (!readings.length) { clear(); status('Anglian Water returned no hourly readings. Check that this account has a smart meter.'); return; }
-  render();
-  if (selection) status(`${sample ? 'Sample' : 'Available'} history: ${londonWall(readings[0].start).slice(0, 10)} to ${londonWall(readings.at(-1).start).slice(0, 10)}. ${sample ? 'These are fictional readings.' : 'Dates outside this history cannot be recovered by this export.'}`);
+  datasets = {};
+  for (const resolution of resolutions) {
+    const incoming = payload?.[resolution];
+    try {
+      if (!incoming || incoming.status !== 'ok') throw new Error(incoming?.error || 'This resolution was not returned.');
+      datasets[resolution] = { status: 'ok', rows: normalize(incoming.data, resolution) };
+    } catch (error) { datasets[resolution] = { status: 'error', error: error.message, rows: [] }; }
+  }
+  $('partial').checked = false; render();
+  status(sample ? 'Fictional sample data loaded. Download the sample ZIP to see the file formats.' : incomplete() ? 'History loaded with gaps, an empty dataset or a failed request. Review the summary before downloading.' : 'All three history requests completed. Download every returned reading in one ZIP.');
 }
 async function refresh() {
   try {
@@ -44,44 +68,56 @@ async function refresh() {
     $('disconnect').hidden = result.status === 'disconnected';
     $('login-form').hidden = result.status !== 'disconnected';
     $('mfa-form').hidden = result.status !== 'mfa';
-    if (result.status === 'disconnected' && readings.length && !sample) { clear(); status('Disconnected. Readings cleared from this page.'); }
+    if (result.status === 'disconnected' && datasets && !sample) { clear(); status('Disconnected. Readings cleared from this page.'); }
   } catch (e) { status(e.message, true); }
 }
 $('login-form').addEventListener('submit', async event => {
   event.preventDefault(); clear(); $('connect').disabled = true; status('Signing in securely with Anglian Water…');
   let credentials = { username: $('username').value, password: $('password').value, account: $('account').value };
   for (const id of ['username', 'password', 'account']) $(id).value = '';
-  try { const result = await message('login', credentials); status(result.status === 'mfa' ? 'Enter the verification code sent by Anglian Water.' : 'Connected. Choose your dates and load your readings.'); await refresh(); if (result.status === 'mfa') $('code').focus(); }
+  try { const result = await message('login', credentials); status(result.status === 'mfa' ? 'Enter the verification code sent by Anglian Water.' : 'Connected. Load all available history.'); await refresh(); if (result.status === 'mfa') $('code').focus(); }
   catch (e) { status(e.message, true); }
   finally { credentials = null; $('connect').disabled = false; }
 });
 $('mfa-form').addEventListener('submit', async event => {
   event.preventDefault(); $('verify').disabled = true; status('Verifying your code…');
   let code = $('code').value; $('code').value = '';
-  try { await message('mfa', { code }); await refresh(); status('Connected. Choose your dates and load your readings.'); }
+  try { await message('mfa', { code }); await refresh(); status('Connected. Load all available history.'); }
   catch(e) { status(e.message, true); } finally { code = ''; $('verify').disabled = false; }
 });
-$('disconnect').addEventListener('click', async () => { clear(); $('password').value = ''; $('username').value = ''; $('account').value = ''; $('code').value = ''; try { await message('logout'); await refresh(); status('Signed out. Your server session and displayed readings have been cleared.'); } catch(e) { status(e.message, true); } });
+$('disconnect').addEventListener('click', async () => { clear(); for (const id of ['password', 'username', 'account', 'code']) $(id).value = ''; try { await message('logout'); await refresh(); status('Signed out. Your server session and displayed readings have been cleared.'); } catch(e) { status(e.message, true); } });
 $('load').addEventListener('click', async () => {
-  clear(); const request = generation; busy = true; $('load').disabled = true; status('Loading hourly readings from Anglian Water…');
-  try { const result = await message('readings'); if (request === generation) receive(result.data); } catch (e) { if (request === generation) status(e.message, true); }
-  finally { busy = false; downloadState(); await refresh(); }
+  clear(); const request = generation; busy = true; $('load').disabled = true; $('demo').disabled = true;
+  status('Requesting all available hourly, daily and monthly history…');
+  try { const result = await message('readings'); if (request === generation) receive(result.datasets); }
+  catch (e) { if (request === generation) status(e.message, true); }
+  finally { busy = false; $('demo').disabled = false; downloadState(); await refresh(); }
 });
 $('demo').addEventListener('click', () => {
-  clear(); sample = true; $('demo-badge').hidden = false; $('start').value = '2026-09-01'; $('end').value = '2026-09-07';
-  const records = []; let cumulative = 120;
-  for (let i = 0; i < 168; i++) { const consumption = [0, 0, 0, 1, 0, 2, 9, 26, 18, 5, 3, 4, 8, 2, 1, 3, 6, 22, 19, 12, 6, 3, 1, 0][i % 24]; cumulative += consumption / 1000; records.push({ meters: [{ meter_serial_number: 'DEMO-001', read_at: new Date(Date.parse('2026-09-01T00:00:00Z') + i * 3600000).toISOString(), consumption, read: +cumulative.toFixed(3) }] }); }
-  receive({ result: { records } });
+  clear(); sample = true; $('demo-badge').hidden = false;
+  const payload = {};
+  for (const resolution of resolutions) {
+    const count = {hourly: 168, daily: 365, monthly: 24}[resolution];
+    const records = Array.from({length: count}, (_, i) => {
+      const read_at = resolution === 'hourly' ? new Date(Date.parse('2026-09-01T00:00:00Z') + i * 3600000).toISOString() : resolution === 'daily' ? new Date(Date.UTC(2025, 6, 1 + i)).toISOString().slice(0, 10) : new Date(Date.UTC(2024, 8 + i, 1)).toISOString().slice(0, 10);
+      const consumption = resolution === 'hourly' ? [0, 0, 0, 1, 0, 2, 9, 26, 18, 5, 3, 4, 8, 2, 1, 3, 6, 22, 19, 12, 6, 3, 1, 0][i % 24] : resolution === 'daily' ? 150 + i % 40 : 4500 + i * 13;
+      return {meters: [{meter_serial_number: 'Meter 1', read_at, consumption, read: null}]};
+    });
+    payload[resolution] = {status: 'ok', data: {result: {records}}};
+  }
+  receive(payload);
 });
-for (const id of ['start', 'end', 'meter']) $(id).addEventListener('change', () => { status(''); if (readings.length) render(); });
+$('resolution').addEventListener('change', render);
 $('partial').addEventListener('change', downloadState);
 $('download').addEventListener('click', () => {
-  if ($('download').disabled || !selection) return;
-  const blob = new Blob([csv(selection.rows)], { type: 'text/csv;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a');
-  a.href = url; a.download = `${sample ? 'SAMPLE-' : ''}anglian-water-hourly-${$('start').value}-to-${$('end').value}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
-  status(`${sample ? 'Sample CSV' : 'CSV'} download started — ${selection.rows.length} readings${selection.missing ? ', incomplete coverage' : ''}.`);
+  if ($('download').disabled || !datasets) return;
+  try {
+    const blob = new Blob([zip(exportFiles(datasets, sample))], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = `${sample ? 'SAMPLE-' : ''}anglian-water-all-history.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
+    status(`${sample ? 'Sample ZIP' : 'ZIP'} download started. Includes hourly.csv, daily.csv, monthly.csv and a coverage report.`);
+  } catch(e) { status(e.message, true); }
 });
-const yesterday = new Date(Date.now() - 86400000); $('end').value = londonWall(yesterday.getTime()).slice(0, 10); $('start').value = londonWall(yesterday.getTime() - 6 * 86400000).slice(0, 10);
 window.addEventListener('pagehide', () => { for (const id of ['username', 'password', 'account', 'code']) $(id).value = ''; });
 window.addEventListener('focus', refresh);
 setInterval(refresh, 30000);

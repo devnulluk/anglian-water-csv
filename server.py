@@ -5,6 +5,7 @@ import logging
 import os
 import math
 import re
+import json
 import secrets
 import time
 from collections import deque
@@ -32,6 +33,7 @@ ORIGIN = web.AppKey('origin', str)
 SECURE = web.AppKey('secure', bool)
 FACTORY = web.AppKey('auth_factory', object)
 ATTEMPTS = web.AppKey('attempts', deque)
+FREQUENCIES = {'hourly': '10', 'daily': '20', 'monthly': '30'}
 
 class PrivateAuth(MSOB2CAuth):
     """Discard identity claims and login artifacts after authentication/refresh."""
@@ -60,13 +62,14 @@ class PrivateAuth(MSOB2CAuth):
         await super().send_refresh_request()
         self.minimize()
 
-def usage_only(data):
+def usage_only(data, labels=None):
     """Allowlist usage scalars; never forward metadata or real meter identifiers."""
     body = data.get('result', data) if isinstance(data, dict) else data
     records = body.get('records', body) if isinstance(body, dict) else body
     if not isinstance(records, list):
         raise ValueError('Invalid usage schema')
-    labels, output = {}, []
+    labels = {} if labels is None else labels
+    output = []
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get('meters'), list):
             raise ValueError('Invalid usage schema')
@@ -79,11 +82,14 @@ def usage_only(data):
                 raise ValueError('Invalid meter')
             label = labels.setdefault(str(serial), f'Meter {len(labels) + 1}')
             timestamp = meter.get('read_at')
-            if not isinstance(timestamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?', timestamp):
+            if not isinstance(timestamp, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?', timestamp):
                 raise ValueError('Invalid timestamp')
             clean = {'meter_serial_number': label, 'read_at': timestamp}
             for key in ('consumption', 'read'):
                 value = meter.get(key)
+                if key == 'read' and value is None:
+                    clean[key] = None
+                    continue
                 if type(value) not in (str, int, float):
                     raise ValueError('Invalid usage number')
                 clean[key] = float(value)
@@ -286,15 +292,23 @@ async def readings(request):
         if item.last_load > time.monotonic() - 10:
             return problem('Please wait ten seconds between refreshes.', 429)
         item.last_load = time.monotonic()
-        try:
-            async with asyncio.timeout(60):
-                data = await API(item.auth).send_request('get_usage_details', None, item.account, GRANULARITY='10')
-        except Exception as exc:
-            return error_response(exc)
+        datasets, labels = {}, {}
+        # Serial calls share authentication safely; every resolution is fetched
+        # directly, without deriving older daily/monthly data from hourly data.
+        for resolution, frequency in FREQUENCIES.items():
+            if request.app[STORE].get(request.cookies.get(COOKIE)) is not item:
+                return problem('You signed out while the readings were loading.', 401)
+            try:
+                async with asyncio.timeout(30):
+                    data = await API(item.auth).send_request('get_usage_details', None, item.account, GRANULARITY=frequency)
+                datasets[resolution] = {'status': 'ok', 'data': usage_only(data, labels)}
+                data = None
+            except Exception as exc:
+                datasets[resolution] = {'status': 'error', 'error': json.loads(error_response(exc).text)['error']}
         if request.app[STORE].get(request.cookies.get(COOKIE)) is not item:
             return problem('You signed out while the readings were loading.', 401)
         item.expires = time.monotonic() + TTL
-    return with_cookie(web.json_response({'ok': True, 'data': usage_only(data)}), request, request.cookies[COOKIE])
+    return with_cookie(web.json_response({'ok': True, 'datasets': datasets}), request, request.cookies[COOKIE])
 
 async def cleanup(app):
     async def sweep():
@@ -332,7 +346,7 @@ def create_app(origin=None, secure=None, auth_factory=PrivateAuth):
     app.router.add_post('/api/readings', readings)
     async def asset(request):
         name = request.match_info.get('name', 'index.html')
-        if name not in {'index.html', 'app.js', 'api.js', 'data.js', 'styles.css', 'icon.svg'}:
+        if name not in {'index.html', 'app.js', 'api.js', 'data.js', 'archive.js', 'styles.css', 'icon.svg'}:
             raise web.HTTPNotFound()
         return web.FileResponse(STATIC / name)
     app.router.add_get('/', asset)

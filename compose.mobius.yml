@@ -1,6 +1,6 @@
 services:
   water-ledger:
-    image: ghcr.io/devnulluk/anglian-water-csv:${IMAGE_TAG:-0.1.2}
+    image: ghcr.io/devnulluk/anglian-water-csv:${IMAGE_TAG:-0.2.0}
     container_name: anglian-water-csv
     restart: unless-stopped
     environment:

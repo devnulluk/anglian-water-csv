@@ -42,3 +42,10 @@ The application does not intentionally persist customer identity or credentials.
 - Python and JavaScript strings are garbage-collected, not securely overwritten. Clearing references reduces retention but is not forensic erasure. Memory-only also does not mean the server never receives credentials.
 
 A real-account end-to-end export still requires account-holder validation. No guarantee is made about how much usage history the upstream service returns.
+
+
+## 0.2.0 all-history export update
+
+The app now requests usage frequencies 10, 20 and 30 for hourly, daily and monthly data. The same private-data allowlist applies to all three responses. Meter labels are anonymous and consistent within each ZIP; the temporary mapping is discarded when the request completes. No additional profile, billing, payment or associated-account endpoints are used. Daily/monthly dates are preserved as reported and missing cumulative readings remain blank.
+
+All CSVs and the ZIP are built in browser memory. The archive contains three usage CSVs plus a text coverage report, with no account number, email, password or real meter serial number. Independent request failures are redacted and reported without discarding other available usage. Thirty-six automated tests cover the revised behavior; the ZIP was also opened and CRC-checked with Python's independent ZIP reader.

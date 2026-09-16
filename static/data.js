@@ -20,21 +20,12 @@ export function timestamp(value) {
   if (candidates.length !== 1) throw new Error(`The timestamp ${value} is ambiguous or invalid during a UK clock change. An explicit UTC offset is needed to export safely.`);
   return candidates[0];
 }
-export function range(start, end) {
-  for (const value of [start, end]) {
-    if (!/^\d{4}-\d\d-\d\d$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw new Error('Choose valid start and end dates.');
-  }
-  if (start > end) throw new Error('The end date must be on or after the start date.');
-  const next = new Date(Date.parse(`${end}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
-  const from = timestamp(`${start}T00:00:00`), to = timestamp(`${next}T00:00:00`);
-  if (to - from > 366 * 86400000 + HOUR) throw new Error('Choose a date range of up to one year.');
-  return { from, to, hours: (to - from) / HOUR };
-}
 function number(value, label) {
   if ((typeof value !== 'number' && typeof value !== 'string') || String(value).trim() === '' || !Number.isFinite(Number(value))) throw new Error(`A reading has invalid ${label}. No values have been replaced with zero.`);
   return Number(value);
 }
-export function normalize(payload) {
+export function normalize(payload, resolution = 'hourly') {
+  if (!['hourly', 'daily', 'monthly'].includes(resolution)) throw new Error('Unknown resolution.');
   const body = payload?.result ?? payload;
   const records = body?.records ?? body;
   if (!Array.isArray(records)) throw new Error('The usage response format has changed or this account has no smart-meter data.');
@@ -43,30 +34,43 @@ export function normalize(payload) {
     if (!Array.isArray(record.meters)) throw new Error('A usage record is missing its meters.');
     for (const meter of record.meters) {
       if (meter.meter_serial_number == null || String(meter.meter_serial_number).trim() === '') throw new Error('A reading is missing its meter serial number.');
-      const end = timestamp(meter.read_at);
-      if (end % HOUR !== 0) throw new Error('A reading is not on an hourly boundary. Export stopped to avoid labelling non-hourly data as hourly.');
-      const row = { meter: String(meter.meter_serial_number), source: meter.read_at, start: end - HOUR, end, litres: number(meter.consumption, 'consumption'), cumulative: number(meter.read, 'cumulative volume') };
-      const key = `${row.meter}\u0000${row.end}`;
+      const source = meter.read_at;
+      if (typeof source !== 'string' || !/^\d{4}-\d\d-\d\d(?:T\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?$/.test(source)) throw new Error('Invalid source reading date.');
+      const date = source.slice(0, 10);
+      const dateMs = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(dateMs) || new Date(dateMs).toISOString().slice(0, 10) !== date) throw new Error('Invalid source reading date.');
+      const end = resolution === 'hourly' ? timestamp(source) : null;
+      if (resolution === 'hourly' && end % HOUR !== 0) throw new Error('A reading is not on an hourly boundary. Export stopped to avoid labelling non-hourly data as hourly.');
+      const row = { meter: String(meter.meter_serial_number), source, date, start: end === null ? null : end - HOUR, end, litres: number(meter.consumption, 'consumption'), cumulative: meter.read == null ? null : number(meter.read, 'cumulative volume') };
+      const key = `${row.meter}\u0000${row.end ?? row.source}`;
       const previous = unique.get(key);
-      if (previous && (previous.litres !== row.litres || previous.cumulative !== row.cumulative)) throw new Error('Conflicting readings exist for the same meter and hour. Export stopped.');
+      if (previous && (previous.litres !== row.litres || previous.cumulative !== row.cumulative)) throw new Error('Conflicting readings exist for the same meter and timestamp. Export stopped.');
       unique.set(key, row);
     }
   }
-  return [...unique.values()].sort((a, b) => a.start - b.start || a.meter.localeCompare(b.meter));
+  return [...unique.values()].sort((a, b) => (resolution === 'hourly' ? a.start - b.start : a.source.localeCompare(b.source)) || a.meter.localeCompare(b.meter));
 }
-export function select(rows, start, end, meter = '') {
-  const bounds = range(start, end);
-  const meters = [...new Set(rows.map(r => r.meter))].filter(m => !meter || m === meter);
-  const chosen = rows.filter(r => r.start >= bounds.from && r.start < bounds.to && (!meter || r.meter === meter));
-  const missing = Math.max(0, bounds.hours * meters.length - chosen.length);
-  return { rows: chosen, missing, expected: bounds.hours * meters.length, total: chosen.reduce((sum, r) => sum + r.litres, 0) };
+export function summarize(rows, resolution) {
+  if (!rows.length) return { count: 0, total: 0, first: '', last: '', missing: 0 };
+  const labels = rows.map(r => resolution === 'hourly' ? londonWall(r.start).replace('T', ' ').slice(0, 16) : resolution === 'monthly' ? r.date.slice(0, 7) : r.date).sort();
+  let missing = 0;
+  for (const meter of new Set(rows.map(r => r.meter))) {
+    const values = [...new Set(rows.filter(r => r.meter === meter).map(r => resolution === 'hourly' ? r.start / HOUR : resolution === 'daily' ? Date.parse(`${r.date}T00:00:00Z`) / 86400000 : Number(r.date.slice(0, 4)) * 12 + Number(r.date.slice(5, 7))))].sort((a, b) => a - b);
+    missing += Math.max(0, values.at(-1) - values[0] + 1 - values.length);
+  }
+  return { count: rows.length, total: rows.reduce((sum, r) => sum + r.litres, 0), first: labels[0], last: labels.at(-1), missing };
 }
 function cell(value) {
   let text = String(value);
   if (/^[\s]*[=+@-]/.test(text) && typeof value !== 'number') text = `'${text}`;
   return `"${text.replaceAll('"', '""')}"`;
 }
-export function csv(rows) {
-  const header = ['meter_label', 'interval_start_utc', 'interval_end_utc', 'interval_start_europe_london', 'source_read_at', 'consumption_litres', 'cumulative_read_m3', 'quality'];
-  return '\uFEFF' + [header, ...rows.map(r => [r.meter, new Date(r.start).toISOString(), new Date(r.end).toISOString(), londonWall(r.start), r.source, r.litres, r.cumulative, r.litres < 0 ? 'negative_consumption' : 'reported'])].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
+export function csv(rows, resolution = 'hourly') {
+  const header = resolution === 'hourly'
+    ? ['meter_label', 'interval_start_utc', 'interval_end_utc', 'interval_start_europe_london', 'source_read_at', 'consumption_litres', 'cumulative_read_m3', 'quality']
+    : ['meter_label', 'source_read_at', 'consumption_litres', 'cumulative_read_m3', 'quality'];
+  const values = rows.map(r => resolution === 'hourly'
+    ? [r.meter, new Date(r.start).toISOString(), new Date(r.end).toISOString(), londonWall(r.start), r.source, r.litres, r.cumulative ?? '', r.litres < 0 ? 'negative_consumption' : 'reported']
+    : [r.meter, r.source, r.litres, r.cumulative ?? '', r.litres < 0 ? 'negative_consumption' : 'reported']);
+  return '\uFEFF' + [header, ...values].map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
 }

@@ -1,29 +1,40 @@
 # Water Ledger
 
-A small self-hosted web app that signs in to Anglian Water and exports **available hourly smart-meter usage as CSV**. Runs as one Docker container with Docker Compose.
+A small self-hosted web app that signs in to Anglian Water and exports **all available hourly, daily and monthly smart-meter usage in one ZIP**. Runs as one Docker container with Docker Compose.
 
 ## Use
 
 1. Open the app over HTTPS.
 2. Enter your Anglian Water email, password and the numeric account number from your bill.
 3. If requested, enter the email verification code from Anglian Water.
-4. Choose inclusive UK dates, load the available readings and select a meter (or all meters).
-5. Review the preview and download your CSV. Incomplete exports require an explicit acknowledgement.
+4. Click **Load all available history**. There is no date or meter filter.
+5. Review the three history ranges, then click **Download all as ZIP**. Empty, failed or gapped datasets require an explicit acknowledgement.
 6. Sign out to clear the server session and displayed data.
 
-The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...csv`.
+The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...zip`.
 
-**Status:** version 0.1.2 includes a privacy audit and hardening. Twenty-nine automated checks pass, covering session isolation, MFA, logout, error redaction, CSV integrity and clock changes. Browser checks verified the sample CSV and the incomplete-export acknowledgement. A real Anglian Water login/export still needs account-holder validation; no live credentials were used during development.
+**Status:** version 0.2.0 adds the three-resolution export. Thirty-six automated checks pass, covering authentication, private-data filtering, independent history requests, partial failures, CSV/ZIP integrity and clock changes. The sample ZIP and browser preview have been checked. Account-specific history availability still needs comparison against the provider's website.
 
-## What date ranges are available?
+## What history is included?
 
-This app calls the hourly smart-meter endpoint used by `pyanglianwater` 3.3.2:
+The ZIP contains:
+
+- `hourly.csv` — every returned hourly reading.
+- `daily.csv` — every returned daily total, fetched independently.
+- `monthly.csv` — every returned monthly total, fetched independently.
+- `README.txt` — returned ranges, row counts, gaps and any failed requests.
+
+The app requests all three frequencies supported by `pyanglianwater` 3.3.2:
 
 ```
-GET /myaccount/v1/accounts/{encrypted-account}/usage/smartmeter/frequency/10
+GET /myaccount/v1/accounts/{encrypted-account}/usage/smartmeter/frequency/{frequency}
 ```
 
-The inspected library exposes **no start/end parameters or pagination for this usage endpoint**. Date selection filters the history actually returned; it does not promise unlimited historical retrieval. The date parameters on a different *cost* endpoint are not evidence that historical hourly *usage* can be fetched. The UI reports available history and counts missing meter-hours. Missing values are never fabricated as zero.
+Frequency codes are `10` (hourly), `20` (daily) and `30` (monthly). Daily and monthly CSVs use the provider's data directly; they are not extrapolated from the shorter hourly history. All meters are included, with anonymous labels consistent across the three files in a download.
+
+The inspected usage endpoint exposes no date-range or pagination parameters. The app exports every record it returns, without a local date filter or one-year limit. It does not claim the provider has no additional history elsewhere. Different resolutions can reach back different distances; the page shows the actual returned range for each.
+
+Missing periods are never filled with zero. Gaps are counted within each meter's returned range, not before its first or after its last reading. If a request fails, other resolutions remain available. A failed or empty resolution has a header-only CSV and an explanation in `README.txt`. Do not add totals across resolutions: they overlap.
 
 Only smart/enhanced smart meters are supported. New readings can be delayed. This app does not poll or retain history between sessions; download and keep exports if you need an archive.
 
@@ -38,7 +49,7 @@ This Docker version is **not browser-only**. Credentials travel browser → your
 - The server allowlists timestamps, numeric volumes and anonymous meter labels. Extra API metadata and real meter serial numbers never reach the page or CSV. Email/account/password inputs clear on submission.
 - Identity claims and login cookies are discarded after authentication; only tokens and the identifiers needed for usage requests remain in memory until logout/expiry.
 - See [the privacy audit](docs/PRIVACY.md) for scope, tests and limits, including browser-managed password storage, proxy providers and host-level snapshots.
-- Readings are returned to the user's page and converted into CSV locally. They are not saved on the server. Responses use `Cache-Control: no-store`; no analytics, remote scripts, fonts or tracking are included.
+- Readings are returned to the user's page and converted into CSV and ZIP locally. They are not saved on the server. Responses use `Cache-Control: no-store`; no analytics, remote scripts, fonts or tracking are included.
 - The app uses same-origin POST checks, a custom request header, bounded request sizes, login/MFA rate limits and fixed upstream endpoints.
 - There is **no app-level user directory**. Each visitor signs into their own Anglian Water account. Use an authentication gateway or private network if access should be restricted.
 
@@ -71,7 +82,7 @@ You can use the prebuilt public image instead of building from source. Save this
 ```yaml
 services:
   water-ledger:
-    image: ghcr.io/devnulluk/anglian-water-csv:0.1.2
+    image: ghcr.io/devnulluk/anglian-water-csv:0.2.0
     restart: unless-stopped
     environment:
       APP_ORIGIN: https://water.example.com
@@ -127,17 +138,19 @@ UTF-8 with BOM, CRLF line endings and quoted fields:
 
 | Column | Meaning |
 | --- | --- |
-| `meter_label` | Anonymous label such as Meter 1; real serial numbers are excluded. Labels apply to the current response and may change between exports. |
-| `interval_start_utc` / `interval_end_utc` | Unambiguous hour boundaries |
-| `interval_start_europe_london` | UK wall-clock label; use UTC columns to distinguish repeated autumn hours |
+| `meter_label` | Anonymous label such as Meter 1; real serial numbers are excluded. Labels match across all three files in a ZIP and may change between exports. |
+| `interval_start_utc` / `interval_end_utc` | Unambiguous hour boundaries (hourly CSV only) |
+| `interval_start_europe_london` | Hourly UK wall-clock label; use UTC columns to distinguish repeated autumn hours |
 | `source_read_at` | Unmodified upstream reading timestamp |
-| `consumption_litres` | Consumption for that hour |
-| `cumulative_read_m3` | Meter's cumulative reading, in cubic metres |
+| `consumption_litres` | Consumption reported for that resolution |
+| `cumulative_read_m3` | Meter's cumulative reading in cubic metres, blank when not returned |
 | `quality` | `reported` or `negative_consumption` |
 
-Like Home Assistant, the app treats `read_at` as the **end** of the usage hour and subtracts one actual hour. Date filters apply to the start in Europe/London. UK clock-change days have 23 or 25 hours. Offset-free timestamps are interpreted as Europe/London; an ambiguous autumn timestamp or nonexistent spring timestamp stops export instead of guessing. If that happens, the upstream response needs explicit offsets to export safely.
+For hourly readings, the app treats `read_at` as the **end** of the usage hour and subtracts one actual hour, following Home Assistant. UK clock-change days have 23 or 25 hours. Offset-free timestamps are interpreted as Europe/London; an ambiguous autumn timestamp or nonexistent spring timestamp marks that dataset as failed instead of guessing. If that happens, the upstream response needs explicit offsets to export safely.
 
-Duplicate identical readings are deduplicated by meter/UTC hour. Conflicting duplicates, malformed numbers, invalid times and non-hourly boundaries stop export. Negative readings remain visible and flagged. Text fields are escaped against spreadsheet formulas.
+Daily and monthly files preserve `source_read_at` as supplied, without inventing start/end boundaries or shifting the provider date. Their CSVs omit the hourly interval columns.
+
+Duplicate identical readings are deduplicated by meter and source timestamp (UTC hour for hourly data). Conflicting duplicates, malformed numbers, invalid dates and non-hourly boundaries mark the affected dataset as failed. Negative readings remain visible and flagged. Text fields are escaped against spreadsheet formulas.
 
 ## Research and attribution
 

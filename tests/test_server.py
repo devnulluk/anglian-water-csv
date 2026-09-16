@@ -102,7 +102,8 @@ async def test_users_are_isolated_and_only_hourly_endpoint_is_used(client, monke
         assert (await (await other.get(client.make_url('/api/session'))).json())['status'] == 'disconnected'
     response = await client.post('/api/readings', headers=HEADERS, json={})
     assert response.status == 200
-    assert calls == [('get_usage_details', '123456789', {'GRANULARITY': '10'})]
+    assert calls == [('get_usage_details', '123456789', {'GRANULARITY': f}) for f in ('10', '20', '30')]
+    assert set((await response.json())['datasets']) == {'hourly', 'daily', 'monthly'}
     assert (await client.post('/api/readings', headers=HEADERS, json={})).status == 429
 
 @pytest.mark.asyncio
@@ -165,7 +166,7 @@ async def test_usage_response_removes_identity_metadata(client, monkeypatch):
     await login(client)
     response = await client.post('/api/readings', headers=HEADERS, json={})
     assert response.status == 200
-    assert (await response.json())['data'] == {'result': {'records': [{'meters': [{
+    assert (await response.json())['datasets']['hourly']['data'] == {'result': {'records': [{'meters': [{
         'meter_serial_number': 'Meter 1', 'read_at': '2026-09-01T01:00:00Z',
         'consumption': 12.5, 'read': 123.0}]}]}}
     text = await response.text()
@@ -215,3 +216,40 @@ async def test_upstream_errors_preserve_safe_json(client, monkeypatch):
     assert response.content_type == 'application/json'
     assert (await response.json())['error'] == 'Could not reach Anglian Water. Please try again later.'
     assert not client.app[server.STORE]
+
+
+@pytest.mark.asyncio
+async def test_independent_histories_and_consistent_anonymous_labels(client, monkeypatch):
+    async def send(api, endpoint, body, account, **kwargs):
+        frequency = kwargs['GRANULARITY']
+        # Same meters arrive in a different order, with much older monthly data.
+        serials = ['PRIVATE-A', 'PRIVATE-B'] if frequency == '10' else ['PRIVATE-B', 'PRIVATE-A']
+        date = {'10': '2026-06-30T01:00:00Z', '20': '2025-07-01', '30': '2024-09-01'}[frequency]
+        return {'records': [{'meters': [{'meter_serial_number': serial, 'read_at': date,
+            'consumption': 20, 'private': 'PRIVATE'} for serial in serials]}]}
+    monkeypatch.setattr(server.API, 'send_request', send)
+    await login(client)
+    response = await client.post('/api/readings', headers=HEADERS, json={})
+    data = (await response.json())['datasets']
+    assert all(item['status'] == 'ok' for item in data.values())
+    assert data['hourly']['data']['result']['records'][0]['meters'][0]['meter_serial_number'] == 'Meter 1'
+    assert data['daily']['data']['result']['records'][0]['meters'][0]['meter_serial_number'] == 'Meter 2'
+    assert data['monthly']['data']['result']['records'][0]['meters'][0]['read_at'] == '2024-09-01'
+    assert 'PRIVATE' not in await response.text()
+
+@pytest.mark.asyncio
+async def test_failed_resolution_does_not_discard_others_or_leak_errors(client, monkeypatch):
+    calls = []
+    async def send(api, endpoint, body, account, **kwargs):
+        calls.append(kwargs['GRANULARITY'])
+        if kwargs['GRANULARITY'] == '20':
+            raise aiohttp.ClientConnectionError('PRIVATE token and account')
+        return {'records': []}
+    monkeypatch.setattr(server.API, 'send_request', send)
+    await login(client)
+    response = await client.post('/api/readings', headers=HEADERS, json={})
+    data = (await response.json())['datasets']
+    assert calls == ['10', '20', '30']
+    assert data['hourly']['status'] == data['monthly']['status'] == 'ok'
+    assert data['daily']['status'] == 'error'
+    assert 'PRIVATE' not in await response.text()
