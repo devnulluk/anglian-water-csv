@@ -63,3 +63,11 @@ test('invalid dates, values and non-hourly boundaries are rejected', () => {
   assert.throws(() => normalize(payload(meter('2026-09-01T01:00:00Z', null))), /invalid/);
   assert.throws(() => normalize({ result: { surprise: [] } }), /format/);
 });
+
+test('weekly readings cannot be exported as monthly totals', () => {
+  assert.throws(() => normalize(payload(meter('2026-01-04T23:00:00', 10), meter('2026-01-11T23:00:00', 20)), 'monthly'), /multiple readings per month/);
+  const month = meter('2026-01-31T23:00:00', 100);
+  const rows = normalize(payload(month, month, meter('2026-01-31T23:00:00', 200, 'M2'), meter('2026-02-28T23:00:00', 300)), 'monthly');
+  assert.equal(rows.length, 3);
+  assert.equal(summarize(rows, 'monthly').total, 600);
+});

@@ -33,7 +33,9 @@ ORIGIN = web.AppKey('origin', str)
 SECURE = web.AppKey('secure', bool)
 FACTORY = web.AppKey('auth_factory', object)
 ATTEMPTS = web.AppKey('attempts', deque)
-FREQUENCIES = {'hourly': '10', 'daily': '20', 'monthly': '30'}
+# Provider website: Hourly=10, Daily=20, Weekly=30, Monthly=40.
+# pyanglianwater 3.3.2 incorrectly labels 30 as monthly.
+FREQUENCIES = {'hourly': '10', 'daily': '20', 'monthly': '40'}
 
 class PrivateAuth(MSOB2CAuth):
     """Discard identity claims and login artifacts after authentication/refresh."""

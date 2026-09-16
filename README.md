@@ -13,7 +13,7 @@ A small self-hosted web app that signs in to Anglian Water and exports **all ava
 
 The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...zip`.
 
-**Status:** version 0.2.0 adds the three-resolution export. Thirty-six automated checks pass, covering authentication, private-data filtering, independent history requests, partial failures, CSV/ZIP integrity and clock changes. The sample ZIP and browser preview have been checked. Account-specific history availability still needs comparison against the provider's website.
+**Status:** version 0.2.1 corrects monthly exports that previously requested weekly data. Thirty-seven automated checks pass, covering authentication, private-data filtering, independent history requests, partial failures, CSV/ZIP integrity and clock changes. The sample ZIP and browser preview have been checked. Account-specific history availability still needs comparison against the provider's website.
 
 ## What history is included?
 
@@ -30,7 +30,7 @@ The app requests all three frequencies supported by `pyanglianwater` 3.3.2:
 GET /myaccount/v1/accounts/{encrypted-account}/usage/smartmeter/frequency/{frequency}
 ```
 
-Frequency codes are `10` (hourly), `20` (daily) and `30` (monthly). Daily and monthly CSVs use the provider's data directly; they are not extrapolated from the shorter hourly history. All meters are included, with anonymous labels consistent across the three files in a download.
+Frequency codes are `10` (hourly), `20` (daily) and `40` (monthly). Code `30` is weekly, despite the monthly label in pyanglianwater 3.3.2. The mapping follows the provider website. Multiple readings within one month for a meter are rejected to prevent mislabelled monthly exports. Daily and monthly CSVs use the provider's data directly; they are not extrapolated from the shorter hourly history. All meters are included, with anonymous labels consistent across the three files in a download.
 
 The inspected usage endpoint exposes no date-range or pagination parameters. The app exports every record it returns, without a local date filter or one-year limit. It does not claim the provider has no additional history elsewhere. Different resolutions can reach back different distances; the page shows the actual returned range for each.
 
@@ -82,7 +82,7 @@ You can use the prebuilt public image instead of building from source. Save this
 ```yaml
 services:
   water-ledger:
-    image: ghcr.io/devnulluk/anglian-water-csv:0.2.0
+    image: ghcr.io/devnulluk/anglian-water-csv:0.2.1
     restart: unless-stopped
     environment:
       APP_ORIGIN: https://water.example.com

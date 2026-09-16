@@ -30,6 +30,7 @@ export function normalize(payload, resolution = 'hourly') {
   const records = body?.records ?? body;
   if (!Array.isArray(records)) throw new Error('The usage response format has changed or this account has no smart-meter data.');
   const unique = new Map();
+  const monthlyDates = new Map();
   for (const record of records) {
     if (!Array.isArray(record.meters)) throw new Error('A usage record is missing its meters.');
     for (const meter of record.meters) {
@@ -43,6 +44,12 @@ export function normalize(payload, resolution = 'hourly') {
       if (resolution === 'hourly' && end % HOUR !== 0) throw new Error('A reading is not on an hourly boundary. Export stopped to avoid labelling non-hourly data as hourly.');
       const row = { meter: String(meter.meter_serial_number), source, date, start: end === null ? null : end - HOUR, end, litres: number(meter.consumption, 'consumption'), cumulative: meter.read == null ? null : number(meter.read, 'cumulative volume') };
       const key = `${row.meter}\u0000${row.end ?? row.source}`;
+      if (resolution === 'monthly') {
+        const monthKey = `${row.meter}\u0000${date.slice(0, 7)}`;
+        const priorSource = monthlyDates.get(monthKey);
+        if (priorSource && priorSource !== source) throw new Error('The provider returned multiple readings per month for one meter. Export stopped to avoid labelling weekly or daily data as monthly.');
+        monthlyDates.set(monthKey, source);
+      }
       const previous = unique.get(key);
       if (previous && (previous.litres !== row.litres || previous.cumulative !== row.cumulative)) throw new Error('Conflicting readings exist for the same meter and timestamp. Export stopped.');
       unique.set(key, row);
