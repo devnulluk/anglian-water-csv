@@ -13,7 +13,7 @@ A small self-hosted web app that signs in to Anglian Water and exports **all ava
 
 The sample-data button works without a water account. Sample downloads are clearly named `SAMPLE-...zip`.
 
-**Status:** version 0.2.1 corrects monthly exports that previously requested weekly data. Thirty-seven automated checks pass, covering authentication, private-data filtering, independent history requests, partial failures, CSV/ZIP integrity and clock changes. The sample ZIP and browser preview have been checked. Account-specific history availability still needs comparison against the provider's website.
+**Status:** version 0.2.2 simplifies the interface with GOV.UK-inspired typography, controls and focus styles. Monthly exports use the corrected provider frequency. Thirty-seven automated checks pass, covering authentication, private-data filtering, independent history requests, partial failures, CSV/ZIP integrity and clock changes. The sample ZIP and browser preview have been checked. Account-specific history availability still needs comparison against the provider's website.
 
 ## What history is included?
 
@@ -82,7 +82,7 @@ You can use the prebuilt public image instead of building from source. Save this
 ```yaml
 services:
   water-ledger:
-    image: ghcr.io/devnulluk/anglian-water-csv:0.2.1
+    image: ghcr.io/devnulluk/anglian-water-csv:0.2.2
     restart: unless-stopped
     environment:
       APP_ORIGIN: https://water.example.com

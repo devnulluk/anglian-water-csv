@@ -2,9 +2,10 @@
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Water Ledger · Anglian Water history export</title><link rel="icon" href="icon.svg"><link rel="stylesheet" href="styles.css"><script type="module" src="app.js"></script></head>
 <body>
-  <header><a class="brand" href="index.html"><img src="icon.svg" alt="" width="32" height="32"> Water Ledger</a><span class="privacy">Self-hosted · No saved passwords</span></header>
-  <main>
-    <div class="intro"><span class="eyebrow">ANGLIAN WATER / CSV EXPORT</span><h1>Export your water usage.</h1><p>All available hourly, daily and monthly readings in one ZIP.</p></div>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header><a class="brand" href="index.html"><img src="icon.svg" alt="" width="32" height="32"> Water Ledger</a></header>
+  <main id="main-content" tabindex="-1">
+    <div class="intro"><span class="eyebrow">ANGLIAN WATER / CSV EXPORT</span><h1>Export your water usage</h1><p>All available hourly, daily and monthly readings in one ZIP.</p></div>
     <div class="workspace">
       <section class="card connection"><div class="section-title"><span class="step">01</span><h2>Connect your account</h2><span id="badge" class="badge">Not connected</span></div>
         <form id="login-form" autocomplete="off"><label>Email<input type="email" id="username" autocomplete="off" required maxlength="254"></label><label>Password<input type="password" id="password" autocomplete="off" required maxlength="1024"></label><label>Account number<input type="text" id="account" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" required autocomplete="off" aria-describedby="account-help"></label><p id="account-help" class="small">The account number shown on your Anglian Water bill.</p><button id="connect" class="primary" type="submit">Sign in to Anglian Water <span aria-hidden="true">→</span></button></form>
@@ -18,7 +19,7 @@
         <div id="history" aria-live="polite"></div>
       </section>
       <section class="card results"><div class="section-title"><span class="step">03</span><h2>Preview & download</h2><span id="demo-badge" class="badge" hidden>Sample data</span></div>
-        <div id="empty"><div class="empty-icon" aria-hidden="true">≋</div><h3>A little more clarity.</h3><p>Your readings will appear here after loading.</p><button id="demo" class="text">Try it with sample data →</button></div>
+        <div id="empty"><h3>Your usage data</h3><p>Your readings will appear here after loading.</p><button id="demo" class="text">Try it with sample data →</button></div>
         <div id="preview" hidden><label class="preview-picker">Preview resolution<select id="resolution"><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="monthly">Monthly</option></select></label><div class="stats"><div><span id="total">—</span><small>litres in range</small></div><div><span id="count">—</span><small>readings in this resolution</small></div></div><p id="coverage" class="small"></p><div class="table-wrap"><table><thead><tr><th id="preview-heading">Hour starting (UK)</th><th>Meter</th><th>Litres</th></tr></thead><tbody id="rows"></tbody></table></div><p class="small" id="preview-note"></p><label id="partial-label" class="ack" hidden><input type="checkbox" id="partial"> Download the available data even if a resolution is empty, failed or has gaps.</label><button id="download" class="primary" disabled>Download all as ZIP <span aria-hidden="true">↓</span></button></div>
       </section>
     </div>
