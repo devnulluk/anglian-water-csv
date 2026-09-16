@@ -1,8 +1,8 @@
 # Mobius deployment record
 
 - Stack: `anglian-water-csv`, Portainer stack ID 207, environment Mobius (2).
-- Image: `ghcr.io/devnulluk/anglian-water-csv:0.2.1` (public).
-- Application release: `v0.2.1` (correct monthly frequency).
+- Image: `ghcr.io/devnulluk/anglian-water-csv:0.2.2` (public).
+- Application release: `v0.2.2` (simplified GOV.UK-inspired interface).
 - Container: `anglian-water-csv`, non-root, read-only filesystem.
 - Privacy release verified on Mobius: image `0.1.2`, Docker log driver `none`, empty `LogPath`, no persistent mounts, core limit 0, and both memory/memory-plus-swap limits 268435456 bytes.
 - Public HTTPS health check passed after redeployment; served HTML and JavaScript matched the release. Sample preview showed 168 readings and 1,057 litres.
@@ -24,7 +24,7 @@
 4. Check container health and the HTTPS page; sign in again after a restart.
 5. To roll back, restore the previous version tag and redeploy. No database migration is involved.
 
-Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.2.1`.
+Do not configure auto-updates to `latest` for a login-handling service without reviewing changes. The existing stack pins `0.2.2`.
 
 ## Validation still needed
 
@@ -42,3 +42,7 @@ Account-holder validation remains necessary to compare actual hourly/daily/month
 The provider website's usage enum maps hourly=10, daily=20, weekly=30 and monthly=40; its year view selects monthly. The pyanglianwater 3.3.2 monthly enum incorrectly uses 30. The server now requests 40 directly. The browser rejects multiple distinct reading timestamps within one calendar month per meter rather than exporting weekly records as monthly totals. Regression fixtures use synthetic data only.
 
 All 37 tests and the tagged image build passed. Image 0.2.1 was deployed; public HTTPS health passed and the served data module matched the release after line-ending normalization. Account-holder re-export is needed to verify historical range and actual monthly totals against the official table.
+
+## Interface update (0.2.2)
+
+Deployed simplified GOV.UK-inspired styling with independent branding, Arial typography, square controls, yellow keyboard focus and a skip link. Removed the header privacy badge. All 37 tests and the image build passed. The local browser sample preview worked; public health passed and deployed HTML/CSS matched the release.
